@@ -7,13 +7,13 @@
 // useRef gives me direct access to HTML elements (like the canvas)
 // useEffect lets me run code when things change (like when the page loads)
 import React, { useState, useRef, useEffect } from 'react';
-import { Palette, Users, Save, Trash2, Download, LogIn, LogOut } from 'lucide-react';
+import { Palette, Users, Save, Trash2, Download, LogIn, LogOut, UserPlus } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // Setting up Supabase - this is my first time using a real database!
 // I learned that environment variables keep my secret keys safe
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // ===== MAIN REACT COMPONENT =====
@@ -31,6 +31,11 @@ const DrawingBoard = () => {
   // - currentDrawingId: which drawing am I working on? (null if new)
   // - isLoading: is something happening? (true/false)
   // - message: what should I tell the user? (like "Drawing saved!")
+  // - authMode: current authentication mode ('signin' or 'signup')
+  // - email: current email input for signin/signup
+  // - password: current password input for signin/signup
+  // - showAuthDropdown: whether the auth dropdown is visible
+  // - authDropdownRef: reference to the auth dropdown element
   
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -42,6 +47,11 @@ const DrawingBoard = () => {
   const [currentDrawingId, setCurrentDrawingId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [authMode, setAuthMode] = useState('signin'); // 'signin' or 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showAuthDropdown, setShowAuthDropdown] = useState(false);
+  const authDropdownRef = useRef(null);
 
   // These are the colors I can choose from
   const colors = ['#000000', '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
@@ -61,14 +71,34 @@ const DrawingBoard = () => {
     ctx.lineCap = 'round'; // Makes the brush tips round
     ctx.lineJoin = 'round'; // Makes line connections smooth
     
-    // Check if someone was already logged in
-    const existingUser = supabase.getUser();
-    if (existingUser) {
-      setUser(existingUser);
-      loadSavedDrawings();
-      createNewDrawing();
+    // Async function to get user
+    async function fetchUser() {
+      const { data, error } = await supabase.auth.getUser();
+      if (data && data.user) {
+        setUser(data.user);
+        loadSavedDrawings();
+        createNewDrawing();
+      }
     }
+    fetchUser();
   }, []); // Empty array means "only run once when the page loads"
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (authDropdownRef.current && !authDropdownRef.current.contains(event.target)) {
+        setShowAuthDropdown(false);
+      }
+    }
+    if (showAuthDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showAuthDropdown]);
 
   // ===== AUTHENTICATION FUNCTIONS =====
   // I learned that async/await is like saying "wait for this to finish"
@@ -76,20 +106,39 @@ const DrawingBoard = () => {
   const signIn = async () => {
     setIsLoading(true);
     try {
-      // Try to log in with the test account
-      const { data: { user }, error } = await supabase.auth.signInWithPassword({
-        email: 'anonymous@demo.com',
-        password: 'anonymous'
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
-      
       if (error) throw error;
-      
-      setUser(user);
+      setUser(data.user);
       setMessage('Signed in successfully! 🎉');
+      setEmail('');
+      setPassword('');
+      setShowAuthDropdown(false);
       await loadSavedDrawings();
       await createNewDrawing();
     } catch (error) {
       setMessage('Error signing in: ' + error.message);
+    }
+    setIsLoading(false);
+  };
+
+  const signUp = async () => {
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password
+      });
+      if (error) throw error;
+      setMessage('Sign up successful! Please check your email to confirm your account, then sign in.');
+      setAuthMode('signin');
+      setEmail('');
+      setPassword('');
+      setShowAuthDropdown(false);
+    } catch (error) {
+      setMessage('Error signing up: ' + error.message);
     }
     setIsLoading(false);
   };
@@ -149,6 +198,7 @@ const DrawingBoard = () => {
     } catch (error) {
       console.error('Error creating drawing:', error);
       setMessage('Error creating drawing: ' + error.message);
+      // Fallback: create a temporary ID so user can still draw
       const tempId = 'temp-' + Date.now();
       setCurrentDrawingId(tempId);
     }
@@ -333,7 +383,7 @@ const DrawingBoard = () => {
         
         {/* HEADER SECTION */}
         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between relative">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-blue-500 rounded-lg flex items-center justify-center">
                 <Palette className="w-6 h-6 text-white" />
@@ -346,33 +396,99 @@ const DrawingBoard = () => {
               </div>
             </div>
             
-            {/* AUTHENTICATION BUTTONS */}
-            <div className="flex items-center gap-3">
-              {user ? (
-                <button
-                  onClick={signOut}
-                  className="flex items-center gap-2 bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Sign Out
-                </button>
-              ) : (
-                <button
-                  onClick={signIn}
-                  disabled={isLoading}
-                  className="flex items-center gap-2 bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  <LogIn className="w-4 h-4" />
-                  {isLoading ? 'Signing in...' : 'Sign In'}
-                </button>
+            {/* AUTHENTICATION BUTTONS OR DROPDOWN */}
+            <div className="flex items-center gap-3 relative">
+              {!user && (
+                <>
+                  <button
+                    className={`flex items-center gap-2 px-4 py-2 rounded-l-lg text-sm font-medium ${authMode === 'signin' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'} shadow hover:bg-blue-600 transition-colors`}
+                    onClick={() => {
+                      setAuthMode('signin');
+                      setShowAuthDropdown((prev) => authMode !== 'signin' || !prev);
+                    }}
+                  >
+                    <LogIn className="inline w-4 h-4 mr-1" /> Sign In
+                  </button>
+                  <button
+                    className={`flex items-center gap-2 px-4 py-2 rounded-r-lg text-sm font-medium ${authMode === 'signup' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-700'} shadow hover:bg-green-600 transition-colors`}
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setShowAuthDropdown((prev) => authMode !== 'signup' || !prev);
+                    }}
+                  >
+                    <UserPlus className="inline w-4 h-4 mr-1" /> Sign Up
+                  </button>
+                  {/* DROPDOWN FORM */}
+                  {showAuthDropdown && (
+                    <div
+                      ref={authDropdownRef}
+                      className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-6 z-50 animate-dropdown"
+                      style={{ minWidth: '20rem' }}
+                    >
+                      <div className="mb-4 flex justify-center gap-2">
+                        <button
+                          className={`flex-1 py-2 rounded-l-lg text-sm font-medium ${authMode === 'signin' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
+                          onClick={() => setAuthMode('signin')}
+                        >
+                          <LogIn className="inline w-4 h-4 mr-1" /> Sign In
+                        </button>
+                        <button
+                          className={`flex-1 py-2 rounded-r-lg text-sm font-medium ${authMode === 'signup' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-700'}`}
+                          onClick={() => setAuthMode('signup')}
+                        >
+                          <UserPlus className="inline w-4 h-4 mr-1" /> Sign Up
+                        </button>
+                      </div>
+                      <input
+                        type="email"
+                        placeholder="Email"
+                        className="w-full mb-2 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        autoComplete="email"
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password"
+                        className="w-full mb-4 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        autoComplete="current-password"
+                      />
+                      {authMode === 'signin' ? (
+                        <button
+                          onClick={signIn}
+                          disabled={isLoading}
+                          className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 transition-colors disabled:opacity-50"
+                        >
+                          {isLoading ? 'Signing in...' : 'Sign In'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={signUp}
+                          disabled={isLoading}
+                          className="w-full bg-green-500 text-white py-2 rounded hover:bg-green-600 transition-colors disabled:opacity-50"
+                        >
+                          {isLoading ? 'Signing up...' : 'Sign Up'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
-              
               {user && (
                 <div className="flex items-center gap-2">
                   <Users className="w-5 h-5 text-gray-500" />
                   <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-xs font-semibold text-white">
                     {user.email[0].toUpperCase()}
                   </div>
+                  <button
+                    onClick={signOut}
+                    className="flex items-center gap-2 bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
                 </div>
               )}
             </div>
@@ -451,6 +567,31 @@ const DrawingBoard = () => {
                   Clear Canvas
                 </button>
               </div>
+            </div>
+            
+            {/* SAVED DRAWINGS LIST */}
+            <div className="bg-white rounded-lg shadow-lg p-4 mt-4">
+              <h3 className="font-medium text-gray-800 mb-3">Your Saved Drawings</h3>
+              {!user ? (
+                <p className="text-sm text-gray-500">Sign in to see your saved drawings</p>
+              ) : savedDrawings.length === 0 ? (
+                <p className="text-sm text-gray-500">No saved drawings yet</p>
+              ) : (
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {savedDrawings.map(drawing => (
+                    <div 
+                      key={drawing.id}
+                      className="p-2 bg-gray-50 rounded hover:bg-gray-100 cursor-pointer transition-colors"
+                      onClick={() => loadDrawing(drawing.id)}
+                    >
+                      <div className="text-sm font-medium text-gray-800">{drawing.name}</div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(drawing.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           
