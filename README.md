@@ -14,7 +14,6 @@ A full-stack drawing application built for learning React, databases, and real-t
 ## 🛠️ Technologies
 - **Frontend**: React, Canvas API, Tailwind CSS
 - **Backend**: Supabase (PostgreSQL database)
-- **Real-time**: WebSockets simulation
 - **Deployment**: Github Pages
 
 ## 🚀 Features
